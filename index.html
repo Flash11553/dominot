@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Domino</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --surface-1: #f2f2f2;
+    --surface-2: #ffffff;
+    --border: #e3e3e3;
+    --text-primary: #111111;
+    --text-secondary: #555555;
+    --text-muted: #8a8a8a;
+    --accent: #2f7fd4;
+    --accent-tint: #e8f1fb;
+    --on-accent: #ffffff;
+    --tile-bg: #fdf8ec;
+    --tile-border: #b8a878;
+    --dim-bg: #d8d5cc;
+    --dim-border: #adaaa1;
+    --dim-dot: #8a8a85;
+    --dot: #1a1a1a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; padding: 10px;
+    background: var(--surface-1);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--text-primary);
+  }
+  #app { max-width: 480px; margin: 0 auto; }
+  .card { background: var(--surface-2); border-radius: 14px; overflow: hidden; border: 0.5px solid var(--border); }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .header { padding: 14px; border-bottom: 0.5px solid var(--border); }
+  button, .btn {
+    font-family: inherit; font-size: 14px; border: none; border-radius: 10px;
+    padding: 12px; cursor: pointer; background: var(--accent); color: var(--on-accent); font-weight: 500;
+  }
+  button:disabled { opacity: 0.4; pointer-events: none; }
+  .btn-secondary { background: var(--accent-tint); color: var(--accent); }
+  .muted { color: var(--text-muted); font-size: 12px; }
+  .nav { display: flex; border-top: 0.5px solid var(--border); }
+  .nav-item { flex: 1; text-align: center; padding: 10px 0; color: var(--text-muted); font-size: 10px; cursor: pointer; }
+  .nav-item.active { color: var(--accent); }
+  .nav-item svg { width: 20px; height: 20px; }
+  .lobby-entry { display: flex; align-items: center; gap: 10px; padding: 10px; background: var(--accent-tint); border-radius: 12px; margin-bottom: 8px; cursor: pointer; }
+  .lead-row { display: flex; align-items: center; gap: 10px; padding: 8px; background: var(--surface-1); border-radius: 10px; margin-bottom: 6px; }
+  .badge-num { width: 20px; font-size: 12px; font-weight: 500; }
+  .stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 6px; padding: 0 14px 16px; }
+  .stat-box { background: var(--surface-1); border-radius: 10px; padding: 10px 4px; text-align: center; }
+  .board { margin: 8px 14px 12px; background: #6b4226; border-radius: 12px; padding: 14px 8px; display: flex; align-items: center; justify-content: center; min-height: 50px; overflow-x: auto; }
+  .hand-strip { display: flex; gap: 6px; overflow-x: auto; padding: 0 14px 10px; }
+  .loading { text-align: center; padding: 40px; color: var(--text-muted); font-size: 13px; }
+  .error-box { margin: 14px; padding: 12px; background: #fbe9e7; color: #b3261e; border-radius: 10px; font-size: 13px; }
+</style>
+</head>
+<body>
+<div id="app"><div class="loading">Yüklənir...</div></div>
+
+<script>
+/* =========================================================
+   0. KONFİQURASİYA — TUNEL ÜNVANI DƏYİŞƏNDƏ YALNIZ BUNU YENİLƏ
+   ========================================================= */
+const API_BASE = "https://REPLACE-WITH-YOUR-TUNNEL-URL.trycloudflare.com";
+
+/* =========================================================
+   1. Telegram WebApp SDK
+   ========================================================= */
+const tg = window.Telegram?.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+const INIT_DATA = tg?.initData || "";
+const ME = tg?.initDataUnsafe?.user || { id: 0, first_name: "Sən" };
+const URL_PARAMS = new URLSearchParams(location.search);
+const START_CHAT_ID = URL_PARAMS.get("chat_id");
+
+/* =========================================================
+   2. API köməkçisi
+   ========================================================= */
+async function apiGet(path) {
+  const res = await fetch(API_BASE + path, { headers: { "X-Telegram-Init-Data": INIT_DATA } });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Xəta baş verdi");
+  return res.json();
+}
+async function apiPost(path, body) {
+  const res = await fetch(API_BASE + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Telegram-Init-Data": INIT_DATA },
+    body: JSON.stringify(body || {})
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Xəta baş verdi");
+  return data;
+}
+
+/* =========================================================
+   3. Domino daşı görüntüsü (botdakı _layout_board ilə eyni məntiq)
+   ========================================================= */
+function pips(v, color) {
+  const map = {0:[],1:[5],2:[1,9],3:[1,5,9],4:[1,3,7,9],5:[1,3,5,7,9],6:[1,4,7,3,6,9]};
+  const a = map[v] || [];
+  let h = '<div style="display:grid;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(3,1fr);width:100%;height:100%;padding:2px;box-sizing:border-box;gap:1px;">';
+  for (let i = 1; i <= 9; i++) h += a.includes(i) ? '<div style="background:'+color+';border-radius:50%;width:60%;height:60%;margin:auto;"></div>' : '<div></div>';
+  return h + '</div>';
+}
+const TW = 18, TH = 34, ROW_LEN = 7, TURN_LEN = 2;
+function tileWH(t, segH) { const d = t[0] === t[1]; const o = segH ? (d?'V':'H') : (d?'H':'V'); return {orient:o, w:o==='V'?TW:TH, h:o==='V'?TH:TW}; }
+function layoutBoard(tiles) {
+  const n = tiles.length; if (!n) return {positions:[], maxX:TH, maxY:TW};
+  const pos = new Array(n); let modeH=true,hdir=1,segTarget=ROW_LEN,segCount=0;
+  const first = tileWH(tiles[0], true); let curEdge=0, center=Math.floor(first.h/2);
+  let minX=0,minY=0,maxX=TH,maxY=TW,lastTx=0,lastTy=0,lastW=0,lastH=0;
+  for (let i=0;i<n;i++){
+    const {orient,w,h}=tileWH(tiles[i],modeH); let tx,ty,nextEdge,reverse=false;
+    if(modeH){ ty=center-Math.floor(h/2); if(hdir===1){tx=curEdge;nextEdge=curEdge+w;}else{tx=curEdge-w;nextEdge=curEdge-w;} reverse=(orient==='H'&&hdir===-1); }
+    else { tx=center-Math.floor(w/2); ty=curEdge; nextEdge=curEdge+h; }
+    pos[i]={x:tx,y:ty,orient,reverse};
+    minX=Math.min(minX,tx); minY=Math.min(minY,ty); maxX=Math.max(maxX,tx+w); maxY=Math.max(maxY,ty+h);
+    lastTx=tx; lastTy=ty; lastW=w; lastH=h; curEdge=nextEdge; segCount++;
+    if(segCount>=segTarget && i<n-1){
+      segCount=0;
+      if(modeH){ const rowBottom=lastTy+lastH; const nxt=tileWH(tiles[i+1],false); center=hdir===1?curEdge-Math.floor(nxt.w/2):curEdge+Math.floor(nxt.w/2); curEdge=rowBottom; modeH=false; segTarget=TURN_LEN; }
+      else { const colBottom=curEdge; const newHdir=-hdir; const nxt=tileWH(tiles[i+1],true); curEdge=newHdir===1?lastTx:lastTx+lastW; center=colBottom+Math.floor(nxt.h/2); hdir=newHdir; modeH=true; segTarget=ROW_LEN; }
+    }
+  }
+  const sx=-minX, sy=-minY;
+  return {positions:pos.map(p=>({...p,x:p.x+sx,y:p.y+sy})), maxX:maxX+sx, maxY:maxY+sy};
+}
+function tileDivAbs(aO,bO,orient,x,y,reverse){
+  let a=aO,b=bO; if(reverse){const t=a;a=b;b=t;}
+  const w=orient==='V'?TW:TH, h=orient==='V'?TH:TW;
+  const inner = orient==='H'
+    ? '<div style="display:flex;width:100%;height:100%;"><div style="flex:1;border-right:1px solid var(--tile-border);">'+pips(a,'#1a1a1a')+'</div><div style="flex:1;">'+pips(b,'#1a1a1a')+'</div></div>'
+    : '<div style="display:flex;flex-direction:column;width:100%;height:100%;"><div style="flex:1;border-bottom:1px solid var(--tile-border);">'+pips(a,'#1a1a1a')+'</div><div style="flex:1;">'+pips(b,'#1a1a1a')+'</div></div>';
+  return '<div style="position:absolute;left:'+x+'px;top:'+y+'px;width:'+w+'px;height:'+h+'px;background:var(--tile-bg);border:1px solid var(--tile-border);border-radius:3px;overflow:hidden;">'+inner+'</div>';
+}
+function renderBoard(boardTiles) {
+  if (!boardTiles || !boardTiles.length) return '<p style="margin:0;color:#cbb27a;font-size:12px;">Taxta boşdur</p>';
+  const {positions, maxX, maxY} = layoutBoard(boardTiles);
+  const html = positions.map((p,i) => tileDivAbs(boardTiles[i][0], boardTiles[i][1], p.orient, p.x, p.y, p.reverse)).join('');
+  return '<div style="position:relative;width:'+maxX+'px;height:'+maxY+'px;">'+html+'</div>';
+}
+
+/* =========================================================
+   4. Tətbiq vəziyyəti və naviqasiya
+   ========================================================= */
+const app = document.getElementById('app');
+let S = { screen: 'home', chatId: START_CHAT_ID, gameState: null, pollTimer: null, pendingTile: null, error: null };
+
+function svgHome(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 10l9-7 9 7v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg>'; }
+function svgTrophy(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 4h12v4a6 6 0 0 1-12 0V4z"/><path d="M6 6H3v2a3 3 0 0 0 3 3M18 6h3v2a3 3 0 0 1-3 3"/><path d="M9 20h6M12 14v6"/></svg>'; }
+function svgUser(){ return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg>'; }
+
+function bottomNav(active) {
+  const tabs = [['home','Ana səhifə',svgHome],['rating','Reytinq',svgTrophy],['profile','Profil',svgUser]];
+  return '<div class="nav">' + tabs.map(([id,label,icon]) =>
+    '<div class="nav-item '+(id===active?'active':'')+'" onclick="goto(\''+id+'\')">'+icon()+'<p style="margin:2px 0 0;">'+label+'</p></div>'
+  ).join('') + '</div>';
+}
+
+function stopPolling() { if (S.pollTimer) { clearInterval(S.pollTimer); S.pollTimer = null; } }
+
+async function goto(screen, opts) {
+  stopPolling();
+  S.screen = screen; S.error = null;
+  if (opts) Object.assign(S, opts);
+  await render();
+}
+window.goto = goto;
+
+async function render() {
+  try {
+    if (S.screen === 'home') return renderHome();
+    if (S.screen === 'joinlist') return renderJoinlist();
+    if (S.screen === 'rating') return renderRating();
+    if (S.screen === 'profile') return renderProfile();
+    if (S.screen === 'history') return renderHistory();
+    if (S.screen === 'historyDetail') return renderHistoryDetail();
+    if (S.screen === 'game') return renderGameScreen();
+  } catch (e) {
+    app.innerHTML = '<div class="error-box">Xəta: ' + e.message + '</div><button style="margin:14px;" onclick="goto(\'home\')">Ana səhifəyə qayıt</button>';
+  }
+}
+
+/* ---------- Ana səhifə ---------- */
+async function renderHome() {
+  app.innerHTML = '<div class="loading">Yüklənir...</div>';
+  const [lobbies, leaderboard] = await Promise.all([
+    apiGet('/api/lobbies').catch(() => []),
+    apiGet('/api/leaderboard').catch(() => [])
+  ]);
+  const lobbyRows = lobbies.slice(0, 3).map(l =>
+    '<div class="lobby-entry" onclick="joinLobby('+l.chat_id+')">'+
+      '<div style="flex:1;"><p style="margin:0;font-size:13px;font-weight:500;">Qrup oyunu</p><p class="muted" style="margin:0;">'+l.count+'/4 nəfər · '+(l.players.join(', ')||'boş')+'</p></div>'+
+      '<span style="font-size:12px;color:var(--accent);font-weight:500;">Qoşul</span>'+
+    '</div>'
+  ).join('') || '<p class="muted">Hazırda açıq lobbi yoxdur</p>';
+
+  const leadRows = leaderboard.slice(0, 5).map((p,i) =>
+    '<div class="lead-row"><span class="badge-num">'+(i+1)+'</span><div style="flex:1;"><p style="margin:0;font-size:13px;">'+p.name+'</p><p class="muted" style="margin:0;">'+p.rank+' · Sv.'+p.level+'</p></div><p style="margin:0;font-size:12px;font-weight:500;">'+p.wins+' qələbə</p></div>'
+  ).join('');
+
+  app.innerHTML =
+    '<div class="card">'+
+      '<div class="row" style="padding:16px 14px 14px;"><div style="width:40px;height:40px;border-radius:12px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-size:20px;">🁢</div><div><p style="margin:0;font-size:16px;font-weight:500;">Domino</p><p class="muted" style="margin:0;">'+lobbies.length+' aktiv lobbi</p></div></div>'+
+      '<div style="padding:0 14px 14px;"><div class="row" style="justify-content:space-between;margin-bottom:8px;"><p style="margin:0;font-size:13px;font-weight:500;color:var(--text-secondary);">Açıq lobbilər</p><span style="font-size:11px;color:var(--accent);" onclick="goto(\'joinlist\')">Hamısına bax</span></div>'+lobbyRows+'</div>'+
+      '<div style="padding:0 14px 14px;"><p style="margin:0 0 8px;font-size:13px;font-weight:500;color:var(--text-secondary);">Liderlər</p>'+leadRows+'</div>'+
+      bottomNav('home')+
+    '</div>';
+}
+
+async function joinLobby(chatId) {
+  app.innerHTML = '<div class="loading">Qoşulur...</div>';
+  try {
+    await apiPost('/api/lobby/' + chatId + '/join', {});
+  } catch (e) { /* artıq qoşulubsa da davam et */ }
+  await goto('game', { chatId });
+}
+window.joinLobby = joinLobby;
+
+async function renderJoinlist() {
+  app.innerHTML = '<div class="loading">Yüklənir...</div>';
+  const lobbies = await apiGet('/api/lobbies').catch(() => []);
+  const rows = lobbies.map(l =>
+    '<div class="lobby-entry" onclick="joinLobby('+l.chat_id+')">'+
+      '<div style="flex:1;"><p style="margin:0;font-size:13px;font-weight:500;">Qrup oyunu</p><p class="muted" style="margin:0;">'+l.count+'/4 nəfər · '+(l.players.join(', ')||'boş')+'</p></div>'+
+      '<span style="font-size:12px;color:var(--accent);font-weight:500;">Qoşul</span>'+
+    '</div>'
+  ).join('') || '<p class="muted">Hazırda açıq lobbi yoxdur</p>';
+  app.innerHTML = '<div class="card"><div class="header row"><span style="cursor:pointer;" onclick="goto(\'home\')">←</span><p style="margin:0;font-size:15px;font-weight:500;">Açıq lobbilər</p></div><div style="padding:14px;">'+rows+'</div></div>';
+}
+
+/* ---------- Reytinq ---------- */
+async function renderRating() {
+  app.innerHTML = '<div class="loading">Yüklənir...</div>';
+  const data = await apiGet('/api/leaderboard').catch(() => []);
+  const rows = data.map((p,i) =>
+    '<div class="lead-row" style="'+(String(p.user_id)===String(ME.id)?'background:var(--accent-tint);':'')+'"><span class="badge-num">'+(i+1)+'</span><div style="flex:1;"><p style="margin:0;font-size:13px;font-weight:'+(String(p.user_id)===String(ME.id)?'600':'400')+';">'+p.name+'</p><p class="muted" style="margin:0;">'+p.rank+' · Sv.'+p.level+'</p></div><p style="margin:0;font-size:12px;font-weight:500;">'+p.wins+' qələbə</p></div>'
+  ).join('');
+  app.innerHTML = '<div class="card"><div style="padding:14px 14px 4px;"><p style="margin:0;font-size:15px;font-weight:500;">Liderlər</p><p class="muted" style="margin:0;">Top ' + data.length + '</p></div><div style="padding:10px 14px 14px;max-height:400px;overflow-y:auto;">'+rows+'</div>'+bottomNav('rating')+'</div>';
+}
+
+/* ---------- Profil ---------- */
+async function renderProfile() {
+  app.innerHTML = '<div class="loading">Yüklənir...</div>';
+  const p = await apiGet('/api/profile/' + ME.id).catch(() => ({name: ME.first_name, wins:0, games:0, level:1, rank:'Yeni başlayan'}));
+  const winPct = p.games ? Math.round((p.wins / p.games) * 100) : 0;
+  app.innerHTML =
+    '<div class="card">'+
+      '<div class="row" style="padding:16px 14px 14px;"><div style="width:52px;height:52px;border-radius:50%;background:var(--accent-tint);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:500;">'+p.name.slice(0,2).toUpperCase()+'</div><div><p style="margin:0;font-size:16px;font-weight:500;">'+p.name+'</p><p style="margin:0;font-size:12px;color:var(--accent);font-weight:500;">'+p.rank+' · Sv.'+p.level+'</p></div></div>'+
+      '<div class="stat-grid">'+
+        '<div class="stat-box"><p style="margin:0;font-size:16px;font-weight:500;">'+p.wins+'</p><p class="muted" style="margin:0;">Qələbə</p></div>'+
+        '<div class="stat-box"><p style="margin:0;font-size:16px;font-weight:500;">'+winPct+'%</p><p class="muted" style="margin:0;">Faiz</p></div>'+
+        '<div class="stat-box"><p style="margin:0;font-size:16px;font-weight:500;">'+p.games+'</p><p class="muted" style="margin:0;">Oyun</p></div>'+
+        '<div class="stat-box" style="cursor:pointer;" onclick="goto(\'history\')"><p style="margin:0;font-size:16px;font-weight:500;">📜</p><p class="muted" style="margin:0;">Tarixçə</p></div>'+
+      '</div>'+
+      bottomNav('profile')+
+    '</div>';
+}
+
+/* ---------- Tarixçə ---------- */
+async function renderHistory() {
+  app.innerHTML = '<div class="loading">Yüklənir...</div>';
+  const items = await apiGet('/api/history/' + ME.id).catch(() => []);
+  const rows = items.map(h =>
+    '<div class="row" style="justify-content:space-between;padding:10px 0;border-bottom:0.5px solid var(--border);cursor:pointer;" onclick="openHistory(\''+h.id+'\')">'+
+      '<div><p style="margin:0;font-size:13px;font-weight:500;">'+h.winner_name+' qazandı</p><p class="muted" style="margin:0;">'+h.reason+'</p></div><span>›</span>'+
+    '</div>'
+  ).join('') || '<p class="muted">Hələ oyun oynamamısan</p>';
+  app.innerHTML = '<div class="card"><div class="header row"><span style="cursor:pointer;" onclick="goto(\'profile\')">←</span><p style="margin:0;font-size:15px;font-weight:500;">Tarixçə</p></div><div style="padding:0 14px 14px;">'+rows+'</div></div>';
+}
+async function openHistory(id) {
+  app.innerHTML = '<div class="loading">Yüklənir...</div>';
+  const h = await apiGet('/api/history/game/' + id);
+  const rows = h.details.map((r,i) =>
+    '<div class="lead-row"><span class="badge-num">'+(i+1)+'</span><p style="flex:1;margin:0;font-size:13px;">'+r.name+'</p><p style="margin:0;font-size:12px;color:var(--text-secondary);">'+r.tiles+' daş · '+r.score+' xal</p></div>'
+  ).join('');
+  app.innerHTML = '<div class="card"><div class="header row"><span style="cursor:pointer;" onclick="goto(\'history\')">←</span><p style="margin:0;font-size:15px;font-weight:500;">Oyun detalları</p></div><div style="padding:10px 14px;">'+rows+'</div></div>';
+}
+window.openHistory = openHistory;
+
+/* ---------- Oyun ekranı (canlı, poll edilir) ---------- */
+async function renderGameScreen() {
+  if (!S.chatId) { app.innerHTML = '<div class="error-box">Heç bir oyun seçilməyib.</div><button style="margin:14px;" onclick="goto(\'home\')">Ana səhifəyə qayıt</button>'; return; }
+  await loadGameState();
+  stopPolling();
+  S.pollTimer = setInterval(loadGameState, 1500);
+}
+async function loadGameState() {
+  try {
+    const state = await apiGet('/api/game/' + S.chatId);
+    S.gameState = state;
+    drawGameScreen();
+  } catch (e) {
+    stopPolling();
+    app.innerHTML = '<div class="error-box">' + e.message + '</div><button style="margin:14px;" onclick="goto(\'home\')">Ana səhifəyə qayıt</button>';
+  }
+}
+function drawGameScreen() {
+  const g = S.gameState;
+  if (!g) return;
+  const isMyTurn = g.is_your_turn === true;
+  const hand = g.your_hand || [];
+
+  const badges = g.players.map(p => {
+    const isTurn = String(p.user_id) === String(g.turn_user_id);
+    return '<div class="row" style="padding:7px 10px;background:'+(isTurn?'#f3e2ae':'#e9d3a3')+';border-radius:8px;'+(isTurn?'outline:2px solid var(--accent);':'')+'"><div style="flex:1;min-width:0;"><p style="margin:0;font-size:13px;font-weight:500;color:#4a3413;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'+p.name+'</p></div><span style="font-size:12px;font-weight:500;color:#4a3413;">'+p.tile_count+' daş</span></div>';
+  }).join('');
+
+  const order = hand.map((t,i)=>i).sort((ia,ib)=>{
+    const fa = fitsBoard(hand[ia], g), fb = fitsBoard(hand[ib], g);
+    if (fa === fb) return ia - ib;
+    return fa ? -1 : 1;
+  });
+  const handHtml = order.map(i => {
+    const t = hand[i]; const playable = isMyTurn && fitsBoard(t, g) && !S.pendingTile;
+    const bg = playable ? 'var(--tile-bg)' : 'var(--dim-bg)';
+    const border = playable ? 'var(--tile-border)' : 'var(--dim-border)';
+    const c = playable ? '#1a1a1a' : 'var(--dim-dot)';
+    const [a,b] = t.split('-').map(Number);
+    return '<div onclick="'+(playable ? "playTile('"+t+"')" : '')+'" style="flex-shrink:0;display:flex;flex-direction:column;width:42px;height:80px;background:'+bg+';border:1px solid '+border+';border-radius:6px;overflow:hidden;'+(playable?'cursor:pointer;':'opacity:0.75;')+'"><div style="flex:1;border-bottom:1px solid '+border+';">'+pips(a,c)+'</div><div style="flex:1;">'+pips(b,c)+'</div></div>';
+  }).join('');
+
+  let pendingHtml = '';
+  if (S.pendingTile) {
+    pendingHtml = '<div class="row" style="gap:8px;padding:0 14px 10px;"><button class="btn-secondary" style="flex:1;" onclick="chooseSide(\'left\')">Sol tərəfə</button><button class="btn-secondary" style="flex:1;" onclick="chooseSide(\'right\')">Sağ tərəfə</button></div>';
+  }
+
+  const iCanPlay = hand.some(t => fitsBoard(t, g));
+  const canDraw = isMyTurn && !iCanPlay && g.stock_count > 0 && !S.pendingTile;
+  const canPass = isMyTurn && !iCanPlay && g.stock_count === 0 && !S.pendingTile;
+  const turnLabel = isMyTurn ? 'Sizin növbəniz' : (g.players.find(p=>String(p.user_id)===String(g.turn_user_id))?.name || '...') + ' oynayır...';
+
+  app.innerHTML =
+    '<div class="card">'+
+      '<div class="header row"><span style="cursor:pointer;" onclick="goto(\'home\')">←</span><p style="margin:0;font-size:14px;font-weight:500;flex:1;">Domino masası</p></div>'+
+      '<div style="display:flex;flex-direction:column;gap:6px;padding:10px 12px 0;">'+badges+'</div>'+
+      '<p class="muted" style="margin:8px 14px 0;">Sol uc: '+(g.left??'-')+' · Sağ uc: '+(g.right??'-')+' · Bazarda '+g.stock_count+' daş</p>'+
+      '<div class="board">'+renderBoard(g.board_tiles)+'</div>'+
+      '<div style="text-align:center;margin-bottom:10px;"><span style="background:'+(isMyTurn?'var(--accent)':'#eee')+';color:'+(isMyTurn?'#fff':'#555')+';font-size:12px;font-weight:500;padding:5px 14px;border-radius:20px;">'+turnLabel+'</span></div>'+
+      pendingHtml+
+      '<div style="padding:0 14px 10px;"><p class="muted" style="margin:0 0 8px;">Sənin əlin</p><div class="hand-strip" style="padding:0;">'+handHtml+'</div></div>'+
+      '<div class="row" style="gap:8px;padding:10px 14px 14px;border-top:0.5px solid var(--border);">'+
+        '<button class="btn-secondary" style="flex:1;" '+(canDraw?'':'disabled')+' onclick="doDraw()">⬇️ Bazara get</button>'+
+        '<button class="btn-secondary" style="flex:1;" '+(canPass?'':'disabled')+' onclick="doPass()">⏭️ Keç</button>'+
+      '</div>'+
+    '</div>';
+}
+function fitsBoard(stone, g) {
+  if (g.left == null) return true;
+  const [a,b] = stone.split('-').map(Number);
+  return a === g.left || b === g.left || a === g.right || b === g.right;
+}
+async function playTile(stone, side) {
+  try {
+    const res = await apiPost('/api/game/' + S.chatId + '/play', { stone, side: side || null });
+    if (res.needs_side_choice) { S.pendingTile = stone; drawGameScreen(); return; }
+    S.pendingTile = null;
+    if (res.game_over) { stopPolling(); showGameOver(res); return; }
+    await loadGameState();
+  } catch (e) { alert(e.message); }
+}
+window.playTile = playTile;
+async function chooseSide(side) {
+  const stone = S.pendingTile; S.pendingTile = null;
+  await playTile(stone, side);
+}
+window.chooseSide = chooseSide;
+async function doDraw() {
+  try { await apiPost('/api/game/' + S.chatId + '/draw', {}); await loadGameState(); }
+  catch (e) { alert(e.message); }
+}
+window.doDraw = doDraw;
+async function doPass() {
+  try {
+    const res = await apiPost('/api/game/' + S.chatId + '/pass', {});
+    if (res.game_over) { stopPolling(); showGameOver(res); return; }
+    await loadGameState();
+  } catch (e) { alert(e.message); }
+}
+window.doPass = doPass;
+function showGameOver(res) {
+  app.innerHTML = '<div class="card" style="text-align:center;padding:24px 14px;"><p style="font-size:28px;margin:0;">🏆</p><p style="font-size:15px;font-weight:500;margin:8px 0 0;">'+(res.winner ? res.winner + ' qazandı' : 'Oyun bitdi')+'</p><button style="margin-top:16px;width:100%;" onclick="goto(\'home\')">🏠 Ana səhifə</button></div>';
+}
+
+/* =========================================================
+   5. Başlanğıc
+   ========================================================= */
+(async function init() {
+  if (START_CHAT_ID) { await goto('game', { chatId: START_CHAT_ID }); }
+  else { await goto('home'); }
+})();
+</script>
+</body>
+</html>
