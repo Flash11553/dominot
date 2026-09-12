@@ -31,7 +31,7 @@ TOKEN = os.getenv("BOT_TOKEN", "8836570400:AAHQBUqDX2srWhJ-qLVevzzcM41FybzacrQ")
 # 🟢 YENİ: Mini App-ın canlı ünvanı (Cloudflare Workers-ə deploy etdiyin ünvan).
 # Frontend-i yenidən deploy etsən belə bu adres adətən sabit qalır (yalnız
 # backend tunel ünvanı dəyişəndə frontend faylındakı API_BASE-i yenilə).
-APP_URL = os.getenv("APP_URL", "https://dominot.oyunu.workers.dev")
+APP_URL = os.getenv("APP_URL", "https://domino-app-bot.oyunu.workers.dev")
 MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://flash:flash@vipbotlar.v2sjp3w.mongodb.net/?appName=Vipbotlar")
 
 BOT_USERNAME = None # Botun username-i on_startup zamanı təyin ediləcək
