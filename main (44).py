@@ -27,11 +27,11 @@ logging.basicConfig(level=logging.INFO)
 # =======================================================
 # Təhlükəsizlik üçün os.getenv() ilə Config Vars-dan oxumaq məsləhətdir.
 # İndi isə yer tutucu olaraq saxlanılır.
-TOKEN = os.getenv("BOT_TOKEN", "7985627800:AAFygz7rsp-3ygrOHsN_FuqyGzEt0ByUYqc") 
+TOKEN = os.getenv("BOT_TOKEN", "8836570400:AAHQBUqDX2srWhJ-qLVevzzcM41FybzacrQ") 
 # 🟢 YENİ: Mini App-ın canlı ünvanı (Cloudflare Workers-ə deploy etdiyin ünvan).
 # Frontend-i yenidən deploy etsən belə bu adres adətən sabit qalır (yalnız
 # backend tunel ünvanı dəyişəndə frontend faylındakı API_BASE-i yenilə).
-APP_URL = os.getenv("APP_URL", "https://REPLACE-WITH-YOUR-WORKERS-URL.workers.dev")
+APP_URL = os.getenv("APP_URL", "https://domino-app-bot.oyunu.workers.dev")
 MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://flash:flash@vipbotlar.v2sjp3w.mongodb.net/?appName=Vipbotlar")
 
 BOT_USERNAME = None # Botun username-i on_startup zamanı təyin ediləcək
